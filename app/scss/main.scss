@@ -1,0 +1,219 @@
+
+@media (min-width: 767.8px) {
+   .container-fluid{
+      width: 86%;
+   }
+}
+@media (min-width: 1200px) {
+   .container-fluid{
+      max-width: 1032px;
+   }
+}
+@media (max-width: 768px){
+  h2{
+   font-size: 24px;
+ }
+}
+@media (max-width: 300px){
+.scrolly{
+  width: 450px;
+  height: 1000px;
+  overflow: auto;
+  overflow-y: hidden;
+  margin: 0 auto;
+  white-space: nowrap;
+}
+}
+
+body {
+  background-color: #f6f6f6;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 14px;
+}
+
+header {
+  font-size: 32px;
+  padding-top:41px;
+  padding-bottom:38px;
+}
+
+// Tab >=768px
+
+.tab1 {
+  overflow: hidden;
+  border: none;
+  background: url(../img/tab/tab.png) no-repeat;
+  button {
+    background: url(../img/tab/tab.png) no-repeat;
+    float: left;
+    border: none;
+    outline: none;
+    cursor: pointer;
+    color: #8288a2;
+    padding: 20px;
+    width:175px;
+    position:relative;
+    &:hover {
+      color: #212bff;
+    }
+    &.active {
+      background: url(../img/tab/active_tab.png) no-repeat;
+      color: #212bff;
+      z-index:50;
+    }
+  }
+}
+.tabpad2 {
+  margin:0px -32px;
+  z-index:30;
+}
+.text_tab {
+  margin:0;
+  padding: 0px;
+  margin-left: -32px;
+}
+.tabcontent {
+  background-color: #fff;
+  display: none;
+  padding: 34px 32px;
+  border: none;
+  border-top: none;
+}
+//Tab <768px
+
+button:focus
+{
+    outline: 0 ;
+    outline-color: transparent ;
+    outline-width: 0 ;
+    outline-style: none ;
+    box-shadow: 0 0 0 0 rgba(0,123,255,0);
+}
+.tab2 {
+  background: #fff;
+  border: 1px solid #dadef0;
+  border-width: 1px 0px 1px 0px;
+  border-color: #dadef0; 
+  box-shadow: none !important;
+}
+ul.text_tab {
+  padding-left: 16px;
+}
+.navbar-toggler{
+  padding-left:32px;
+  text-align: left;
+  font-size: 14px;
+  height:56px;
+  width: 100%;
+  background: url(../img/tab/arrow.png) 98% 50% no-repeat;
+  &:hover {
+    color: #212bff;
+  }
+}
+div.tab2 {
+  button.active {
+    background: url(../img/tab/arrow.close.png) 98% 50% no-repeat;
+    &:hover {
+      color: #212bff;
+      background: url(../img/tab/arrow.close.hover.png) 98% 50% no-repeat;
+    }
+  }
+}
+//Поле ввода формы
+input {
+  &::placeholder {
+    color: #fff;
+    font-size: 16px;
+  }
+  &.error {
+    border: 1px solid #ff1e38;
+    z-index:50;
+  }
+}
+
+.form-control {
+  &:hover {
+    border: 1px solid #c3c9db;
+  }
+  &:focus {
+    box-shadow: none;
+    border: 1px solid #8288a2;
+    z-index:30;
+  }
+  cursor: pointer;
+}
+
+label.error {
+ color: #ff1e38;
+ font-weight: normal;
+ font-size: 12px;
+}
+
+
+//Кнопки
+.button1 {
+  margin-top: 20px;
+  margin-right: 59px;
+}
+button.btn {
+  background-color: #212bff;
+  font-size: 16px;
+  border-radius:35px;
+  padding:15px 58px;
+  color: #fff;
+  &:hover {
+    background-color: #2029ea;
+  }
+  &:active {
+    background-color: #1e26d8;
+  }
+}
+
+.btn:active:focus {
+box-shadow: none !important;
+}
+//Radio box
+
+label{
+  cursor: pointer;
+}
+
+[type="radio"] {
+  border: 0;
+  clip: rect(0 0 0 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  + span::before {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    vertical-align: -0.25em;
+    border-radius: 1em;
+    border: 0.4em solid #fff;
+    box-shadow: 0 0 0 0.1em #e4e7f4;
+    margin-right: 0.75em;
+  }
+  &:hover + span::before {
+    box-shadow: 0 0 0 0.1em #2630ff;
+  }
+  &:checked + span::before {
+    background: #212bff;
+    box-shadow: 0 0 0 0.1em #2630ff;
+  }
+}
+.accessible {
+  padding-bottom: 26px;
+  padding-top: 4px;
+}
+//YANDEX MAP
+.map {
+  width: 100%; 
+  height: 550px;
+}
+
+

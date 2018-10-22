@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+	<title>Greensight test</title>
+
+	<!-- Бутстрап -->
+	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+
+	<!-- Собственные стили -->
+	<link href="css/libs.min.css" rel="stylesheet">
+	<link href="css/main.css" rel="stylesheet">
+
+	<!-- Подключение веб-шрифтов -->
+	<link href="https://fonts.googleapis.com/css?family=Montserrat:500" rel="stylesheet">
+
+	<link rel="shortcut icon" type="image/x-icon" href="img/favicon/favicon.ico">
+</head>
+<body>
+	<div class="container-fluid scrolly">
+		<div class="row justify-content-md-center">
+			<div class="col-md-12">
+				<header>
+					<h2>Выберите способ доставки</h2>
+				</header>
+			</div>
+			<div class="col-md-12">
+				<!-- Tab links -->
+				<div class="tab1">
+					<button class="tablinks d-none d-md-block" id="defaultOpen" 
+					onclick="openTab(event, 'Delivery')">
+						<ul class="text_tab">Доставка</ul>
+					</button>
+					<button class="tablinks tabpad2 d-none d-md-block" id="Open2" 
+					onclick="openTab(event, 'Pickup')">
+						<ul class="text_tab">Самовывоз</ul>
+					</button>
+				</div>
+				<div class="tab2 d-md-none">
+					<button class="navbar-toggler tablinks active active" type="button" data-toggle="collapse" 
+					data-target="#collapsibleNavbar" id="defaultOpen2" onclick="changedSelect(event,'Delivery')">
+					<ul class="text_tab">Доставка</ul>
+				</button>
+			</div>
+		</div>
+	</div>
+	
+
+	<!-- .............................................
+		DELIVERY
+		............................................... -->
+		<div id="Delivery" class="tabcontent">
+			<form id="form1">
+				<div class="row justify-content-center justify-content-between">
+					<div class="form-group col-md-6">
+						<label for="fio">ФИО</label>
+						<input type="fio" class="form-control form-control-lg" id="fio" 
+						placeholder="Только кириллица"  name="fio" required>
+					</div>								
+					<div class="form-group col-md-6">
+						<label for="phone">Телефон</label>
+						<input type="phone" class="form-control form-control-lg" id="phone" 
+						placeholder="+7 (___) ___-__-__"  name="phone" required>
+					</div>								
+					<div class="form-group col-md-12">
+						<label for="address">Адрес доставки</label>
+						<input type="address" class="form-control form-control-lg" id="address" 
+						placeholder="Город, улица, дом"  name="address" required>
+					</div>
+					<div class="form-group col-md-12">
+						<label for="comment">Комментарий</label>
+						<textarea class="form-control" rows="4" id="comment" name="comment" required></textarea>
+					</div>
+					<div class="col-2-md ml-auto button1">
+						<button type="submit" class="btn btn-default btn-lg" >Отправить</button>
+					</div>
+				</div>
+			</form>
+		</div>
+	<!-- .............................................
+		Tab to PICKUP
+		............................................... -->
+		
+		<div class="tab2 d-md-none">
+			<button class="navbar-toggler tablinks" type="button" data-toggle="collapse" 
+			data-target="#collapsibleNavbar"  onclick="changedSelect(event,'Pickup')">
+			<ul class="text_tab">Самовывоз</ul>
+		</button>
+	</div>
+	<!-- .............................................
+		PICKUP
+		............................................... -->
+		<div id="Pickup" class="tabcontent">
+			<form id="form2">
+				<div class="row justify-content-center justify-content-between">
+					<div class="col-md-6">
+						<label class="accessible">
+							<input type="radio" value="accessible" name="quality" id="accessible">
+							<span>Пункт Выдачи заказов Песчаная улица, дом 13</span>
+						</label>
+					</div>
+					<div class="col-md-6">
+						<label class="accessible">
+							<input type="radio" value="accessible" name="quality" id="accessible">
+							<span>Пункт Выдачи заказов Подсосенский переулок, 11</span>
+						</label>
+					</div>
+					<div class="col-md-12">
+						<div class="map"id="map"></div>
+					</div>
+					<div class="col-2-md ml-auto button1">
+						<button type="submit" class="btn btn-default btn-lg">Отправить</button>
+					</div>
+				</div>
+			</form>
+		</div>
+	</div>
+</div>
+
+
+<!-- Подключение yandex map API -->
+<script src="https://api-maps.yandex.ru/2.1/?apikey=<AEa0yVsBAAAAyKJxEgIAoWuoG5pGPaDTOwqb66z3gz9HGZkAAAAAAAAAAABvtvBOMMsNvEWqGX1K2k-53yNATg==>&lang=ru_RU" type="text/javascript"></script>
+<!-- Подключение java scrip -->
+<script src="js/libs.min.js"></script>
+<script src="js/common.js"></script>
+<!-- Подключение jQuery и Bottstrap-->
+<script src="https://code.jquery.com/jquery-3.3.1.slim.min.js" integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous"></script>
+<!-- Подключение jQuery плагина Validation -->
+<script src="js/jquery.validate.js"></script>
+<!-- Подключение jQuery плагина Masked Input -->
+<script src="js/jquery.maskedinput.js"></script>
+</body>
+</html>
