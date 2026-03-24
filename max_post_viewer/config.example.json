@@ -1,0 +1,18 @@
+{
+  "target_user_id": "YOUR_USER_ID",
+  "view_interval_seconds": 30,
+  "max_retries": 3,
+  "request_timeout": 15,
+  "accounts": [
+    {
+      "phone": "+7XXXXXXXXXX",
+      "token": "YOUR_ACCESS_TOKEN_1",
+      "proxy": "socks5://user:pass@proxy1.example.com:1080"
+    },
+    {
+      "phone": "+7XXXXXXXXXX",
+      "token": "YOUR_ACCESS_TOKEN_2",
+      "proxy": "http://user:pass@proxy2.example.com:8080"
+    }
+  ]
+}
