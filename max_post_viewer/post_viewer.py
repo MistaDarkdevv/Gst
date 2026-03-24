@@ -4,18 +4,24 @@
 Протокол: wss://ws-api.oneme.ru/websocket
 Origin: https://web.max.ru
 
-Opcodes:
-  1  — heartbeat (keepalive)
-  6  — handshake (первое сообщение)
-  19 — authenticate (авторизация по токену)
-  49 — get_history (получить историю чата/канала)
-  50 — mark_as_read (отметить сообщения как прочитанные = ПРОСМОТР)
-  75 — subscribe_to_chat (подписка на обновления чата)
+Просмотры (глазик) засчитываются сервером по совокупности:
+  1. Телеметрия навигации (Opcode.LOG=5) — клиент сообщает
+     что пользователь перешёл на экран канала
+  2. Запрос истории чата (CHAT_HISTORY=49) — сервер видит
+     что пользователь загрузил посты
+  3. Отметка прочитанным (CHAT_MARK=50) — подтверждение
+
+Полный список opcodes (из PyMax / fresh-milkshake):
+  1=PING, 5=LOG, 6=SESSION_INIT, 19=LOGIN, 49=CHAT_HISTORY,
+  50=CHAT_MARK, 74=MSG_GET_STAT, 75=CHAT_SUBSCRIBE, и др.
 """
 
 import asyncio
 import json
 import logging
+import time
+import uuid
+import random
 
 import aiohttp
 
@@ -23,13 +29,17 @@ from proxy_manager import ProxyAccount, ProxyManager
 
 logger = logging.getLogger(__name__)
 
-# Opcodes внутреннего API Max
-OP_HEARTBEAT = 1
-OP_HANDSHAKE = 6
-OP_AUTHENTICATE = 19
-OP_GET_HISTORY = 49
-OP_MARK_AS_READ = 50
-OP_SUBSCRIBE_CHAT = 75
+
+# Opcodes внутреннего WebSocket API Max (из PyMax enum.py)
+class Op:
+    PING = 1
+    LOG = 5            # Телеметрия / навигация
+    SESSION_INIT = 6   # Handshake
+    LOGIN = 19         # Авторизация по токену
+    CHAT_HISTORY = 49  # Получить историю чата (фиксирует просмотр)
+    CHAT_MARK = 50     # Отметить как прочитанное
+    MSG_GET_STAT = 74  # Статистика сообщения
+    CHAT_SUBSCRIBE = 75  # Подписка на обновления чата
 
 
 class MaxWSClient:
@@ -38,6 +48,7 @@ class MaxWSClient:
     def __init__(self, account: ProxyAccount, timeout: float = 10.0):
         self.account = account
         self.timeout = timeout
+        self._session_id = str(uuid.uuid4())
 
     async def _send(self, opcode: int, payload: dict) -> dict | None:
         """Отправить сообщение и получить ответ."""
@@ -46,6 +57,7 @@ class MaxWSClient:
             return None
 
         msg = {
+            "cmd": 0,
             "seq": self.account.next_seq(),
             "opcode": opcode,
             "payload": payload,
@@ -56,15 +68,29 @@ class MaxWSClient:
             resp = await asyncio.wait_for(ws.receive_json(), timeout=self.timeout)
             return resp
         except asyncio.TimeoutError:
-            logger.warning("[%s] Таймаут ожидания ответа (opcode %d)", self.account.phone, opcode)
+            logger.warning("[%s] Таймаут (opcode %d)", self.account.phone, opcode)
             return None
         except TypeError:
-            # ws.receive_json() может вернуть не JSON при закрытии
             return None
 
+    async def _send_no_wait(self, opcode: int, payload: dict):
+        """Отправить без ожидания ответа (для телеметрии)."""
+        ws = self.account.ws
+        if not ws or ws.closed:
+            return
+        msg = {
+            "cmd": 0,
+            "seq": self.account.next_seq(),
+            "opcode": opcode,
+            "payload": payload,
+        }
+        await ws.send_json(msg)
+
+    # ─── Подключение и авторизация ───
+
     async def handshake(self) -> bool:
-        """Отправить handshake (opcode 6) — первое сообщение."""
-        resp = await self._send(OP_HANDSHAKE, {
+        """SESSION_INIT (opcode 6) — первое сообщение."""
+        resp = await self._send(Op.SESSION_INIT, {
             "userAgent": {"deviceType": "WEB"},
         })
         if resp is not None:
@@ -74,8 +100,8 @@ class MaxWSClient:
         return False
 
     async def authenticate(self) -> bool:
-        """Авторизоваться по токену (opcode 19)."""
-        resp = await self._send(OP_AUTHENTICATE, {
+        """LOGIN (opcode 19) — авторизация по токену."""
+        resp = await self._send(Op.LOGIN, {
             "interactive": True,
             "token": self.account.auth_token,
             "chatsSync": 0,
@@ -85,27 +111,73 @@ class MaxWSClient:
             "chatsCount": 40,
         })
         if resp is None:
-            logger.error("[%s] Нет ответа на authenticate", self.account.phone)
+            logger.error("[%s] Нет ответа на login", self.account.phone)
             return False
 
         payload = resp.get("payload", {})
-        # Проверяем наличие данных профиля в ответе
         if payload.get("chats") is not None or payload.get("token") is not None:
             logger.info("[%s] Авторизация успешна", self.account.phone)
             self.account.reset_fails()
             return True
 
-        error = payload.get("error", resp.get("error", "unknown"))
+        error = payload.get("error", "unknown")
         logger.error("[%s] Ошибка авторизации: %s", self.account.phone, error)
         self.account.is_active = False
         return False
 
-    async def get_history(self, chat_id: str, count: int = 50) -> list[dict]:
-        """Получить историю сообщений чата/канала (opcode 49).
+    # ─── Телеметрия навигации (ключ к просмотрам!) ───
 
-        Сам запрос истории фиксирует просмотр на стороне сервера.
+    async def send_navigation(self, screen_from: str, screen_to: str):
+        """LOG (opcode 5) — отправить событие навигации.
+
+        Это то, что отправляет клиент Max когда пользователь переходит
+        между экранами. Серверу это говорит "пользователь сейчас смотрит
+        на этот экран", что учитывается в счётчике просмотров.
         """
-        resp = await self._send(OP_GET_HISTORY, {
+        action_id = str(uuid.uuid4())
+        await self._send_no_wait(Op.LOG, {
+            "events": [{
+                "type": "NAV",
+                "userId": "",
+                "timestamp": int(time.time() * 1000),
+                "actionId": action_id,
+                "screenFrom": screen_from,
+                "screenTo": screen_to,
+                "sessionId": self._session_id,
+            }],
+        })
+
+    async def send_cold_start(self):
+        """Отправить событие холодного старта (открытие приложения)."""
+        action_id = str(uuid.uuid4())
+        await self._send_no_wait(Op.LOG, {
+            "events": [{
+                "type": "COLD_START",
+                "userId": "",
+                "timestamp": int(time.time() * 1000),
+                "actionId": action_id,
+                "screenFrom": "",
+                "screenTo": "chats_list_tab",
+                "sessionId": self._session_id,
+            }],
+        })
+
+    # ─── Работа с каналом ───
+
+    async def subscribe_to_chat(self, chat_id: str) -> bool:
+        """CHAT_SUBSCRIBE (opcode 75)."""
+        resp = await self._send(Op.CHAT_SUBSCRIBE, {
+            "chatId": chat_id,
+            "subscribe": True,
+        })
+        return resp is not None
+
+    async def get_history(self, chat_id: str, count: int = 50) -> list[dict]:
+        """CHAT_HISTORY (opcode 49) — получить историю.
+
+        Сервер фиксирует что этот пользователь загрузил посты канала.
+        """
+        resp = await self._send(Op.CHAT_HISTORY, {
             "chatId": chat_id,
             "count": count,
         })
@@ -119,29 +191,29 @@ class MaxWSClient:
         return []
 
     async def mark_as_read(self, chat_id: str, message_id: str) -> bool:
-        """Отметить сообщение как прочитанное (opcode 50) — засчитывает просмотр."""
-        resp = await self._send(OP_MARK_AS_READ, {
+        """CHAT_MARK (opcode 50) — отметить как прочитанное."""
+        resp = await self._send(Op.CHAT_MARK, {
             "chatId": chat_id,
             "messageId": message_id,
         })
         return resp is not None
 
-    async def subscribe_to_chat(self, chat_id: str) -> bool:
-        """Подписаться на обновления чата (opcode 75)."""
-        resp = await self._send(OP_SUBSCRIBE_CHAT, {
-            "chatId": chat_id,
-            "subscribe": True,
-        })
-        return resp is not None
-
-    async def send_heartbeat(self) -> bool:
-        """Отправить heartbeat (opcode 1)."""
-        resp = await self._send(OP_HEARTBEAT, {"interactive": False})
-        return resp is not None
+    async def heartbeat(self):
+        """PING (opcode 1)."""
+        await self._send_no_wait(Op.PING, {"interactive": False})
 
 
 class PostViewer:
-    """Просмотр постов канала Max через WebSocket API от имени прокси-аккаунтов."""
+    """Просмотр постов канала Max через WebSocket API.
+
+    Имитирует реальное поведение пользователя:
+    1. Подключается и авторизуется
+    2. Отправляет COLD_START телеметрию
+    3. "Переходит" на экран списка чатов → канал (NAV телеметрия)
+    4. Загружает историю канала (CHAT_HISTORY)
+    5. "Прокручивает" посты с паузами (NAV + задержки)
+    6. Отмечает последний пост как прочитанный (CHAT_MARK)
+    """
 
     def __init__(self, proxy_manager: ProxyManager, target_channel_id: str, posts_count: int = 50):
         self._pm = proxy_manager
@@ -149,7 +221,6 @@ class PostViewer:
         self._posts_count = posts_count
 
     async def _connect_and_auth(self, account: ProxyAccount) -> MaxWSClient | None:
-        """Подключить и авторизовать один аккаунт."""
         try:
             await account.connect()
         except Exception as e:
@@ -171,25 +242,29 @@ class PostViewer:
         return client
 
     async def view_posts_with_account(self, account: ProxyAccount) -> int:
-        """Просмотреть все посты канала одним аккаунтом.
-
-        Стратегия:
-        1. Подключиться через WebSocket + прокси
-        2. Handshake → Authenticate
-        3. Подписаться на чат канала (subscribe_to_chat)
-        4. Получить историю (get_history) — фиксирует просмотр
-        5. Отметить последнее сообщение как прочитанное (mark_as_read)
-        """
+        """Полный цикл просмотра постов одним аккаунтом."""
         client = await self._connect_and_auth(account)
         if not client:
             return 0
 
         try:
-            # Подписываемся на канал
-            await client.subscribe_to_chat(self._channel_id)
-            await asyncio.sleep(0.5)
+            # 1. Телеметрия: "приложение открылось"
+            await client.send_cold_start()
+            await asyncio.sleep(random.uniform(0.5, 1.5))
 
-            # Получаем историю — сам запрос засчитывает просмотр
+            # 2. Телеметрия: "перешёл в список чатов"
+            await client.send_navigation("", "chats_list_tab")
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+
+            # 3. Подписаться на канал
+            await client.subscribe_to_chat(self._channel_id)
+            await asyncio.sleep(random.uniform(0.3, 0.8))
+
+            # 4. Телеметрия: "открыл канал" — ключевой момент!
+            await client.send_navigation("chats_list_tab", f"channel_{self._channel_id}")
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+
+            # 5. Загрузить историю — сервер засчитывает просмотр
             messages = await client.get_history(self._channel_id, count=self._posts_count)
             if not messages:
                 logger.warning("[%s] Нет сообщений в канале %s", account.phone, self._channel_id)
@@ -197,16 +272,24 @@ class PostViewer:
 
             logger.info("[%s] Получено %d постов из канала %s", account.phone, len(messages), self._channel_id)
 
-            # Отмечаем каждый пост как прочитанный
-            viewed = 0
+            # 6. Имитация прокрутки: читаем посты с паузами
+            viewed = len(messages)
+            last_msg_id = None
             for msg in messages:
                 msg_id = msg.get("mid", msg.get("messageId", msg.get("id", "")))
-                if not msg_id:
-                    continue
+                if msg_id:
+                    last_msg_id = str(msg_id)
+                # Пауза "чтения" поста — как будто пользователь скроллит
+                await asyncio.sleep(random.uniform(0.5, 2.0))
+                # Heartbeat чтобы соединение не закрылось
+                await client.heartbeat()
 
-                await asyncio.sleep(0.3)  # Небольшая задержка между mark_as_read
-                if await client.mark_as_read(self._channel_id, str(msg_id)):
-                    viewed += 1
+            # 7. Отмечаем последний пост прочитанным
+            if last_msg_id:
+                await client.mark_as_read(self._channel_id, last_msg_id)
+
+            # 8. Телеметрия: "вышел из канала"
+            await client.send_navigation(f"channel_{self._channel_id}", "chats_list_tab")
 
             logger.info("[%s] Просмотрено %d постов", account.phone, viewed)
             return viewed
@@ -226,11 +309,11 @@ class PostViewer:
             return {}
 
         results: dict[str, int] = {}
-
-        # Запускаем параллельно, но с рандомной задержкой между аккаунтами
         tasks = []
         for i, account in enumerate(active):
-            tasks.append(self._run_for_account(account, results, delay=i * 2))
+            # Задержка между аккаунтами: 2-5с чтобы не было одновременных подключений
+            delay = i * random.uniform(2.0, 5.0)
+            tasks.append(self._run_for_account(account, results, delay=delay))
 
         await asyncio.gather(*tasks)
         return results
