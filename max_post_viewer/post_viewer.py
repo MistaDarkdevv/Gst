@@ -1,8 +1,20 @@
-"""Модуль просмотра постов в мессенджере Max через прокси-аккаунты."""
+"""
+Модуль просмотра постов в мессенджере Max через прокси-аккаунты.
+
+Использует GREEN-API (https://green-api.com/v3/docs/) для доступа
+к пользовательским аккаунтам Max. Просмотр постов канала реализован
+через получение сообщений из чата канала методом GetChatHistory,
+что фиксирует просмотр на стороне сервера Max.
+
+Эндпоинты GREEN-API:
+  - ReadChat         — отметить чат как прочитанный
+  - GetChatHistory   — получить историю сообщений чата (канала)
+  - GetMessage       — получить конкретное сообщение
+  - lastIncomingMessages — журнал последних входящих сообщений
+"""
 
 import asyncio
 import logging
-from typing import Optional
 
 import aiohttp
 
@@ -10,89 +22,129 @@ from proxy_manager import ProxyAccount, ProxyManager
 
 logger = logging.getLogger(__name__)
 
-# Базовый URL API Max (замените на актуальный)
-MAX_API_BASE = "https://api.max.ru/v1"
-
 
 class PostViewer:
-    """Просмотр постов целевого пользователя через прокси-аккаунты."""
+    """Просмотр постов канала Max через GREEN-API от имени прокси-аккаунтов."""
 
-    def __init__(self, proxy_manager: ProxyManager, target_user_id: str, max_retries: int = 3):
+    def __init__(self, proxy_manager: ProxyManager, target_channel_id: str, max_retries: int = 3):
         self._pm = proxy_manager
-        self._target_user_id = target_user_id
+        self._channel_id = target_channel_id
         self._max_retries = max_retries
-        self._viewed_posts: set[str] = set()
+        self._viewed_ids: set[str] = set()
 
-    async def fetch_posts(self, account: ProxyAccount, session: aiohttp.ClientSession) -> list[dict]:
-        """Получить список постов целевого пользователя."""
-        url = f"{MAX_API_BASE}/users/{self._target_user_id}/posts"
+    async def _api_call(
+        self,
+        account: ProxyAccount,
+        session: aiohttp.ClientSession,
+        method: str,
+        payload: dict | None = None,
+        http_method: str = "POST",
+    ) -> dict | list | None:
+        """Универсальный вызов GREEN-API метода с retry."""
+        url = account.api_url(method)
         for attempt in range(self._max_retries):
             try:
-                async with session.get(url) as resp:
+                if http_method == "GET":
+                    req = session.get(url)
+                else:
+                    req = session.post(url, json=payload or {})
+
+                async with req as resp:
                     if resp.status == 200:
-                        data = await resp.json()
                         account.reset_fails()
-                        return data.get("posts", [])
-                    elif resp.status == 401:
-                        logger.error("Токен аккаунта %s невалиден (401)", account.phone)
+                        return await resp.json()
+                    elif resp.status == 401 or resp.status == 403:
+                        logger.error("[%s] Авторизация не удалась (%d) — проверьте idInstance/apiToken", account.phone, resp.status)
                         account.is_active = False
-                        return []
+                        return None
                     elif resp.status == 429:
                         wait = 2 ** (attempt + 1)
-                        logger.warning("Rate limit для %s, ожидание %dс", account.phone, wait)
+                        logger.warning("[%s] Rate limit, ожидание %dс", account.phone, wait)
                         await asyncio.sleep(wait)
+                    elif resp.status == 466:
+                        logger.error("[%s] Аккаунт не авторизован в Max (466). Авторизуйте аккаунт в GREEN-API", account.phone)
+                        account.is_active = False
+                        return None
                     else:
-                        logger.warning("Ответ %d от API для %s", resp.status, account.phone)
+                        body = await resp.text()
+                        logger.warning("[%s] %s вернул %d: %s", account.phone, method, resp.status, body[:200])
                         account.mark_failed()
-                        return []
+                        return None
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.error("Ошибка сети для %s (попытка %d): %s", account.phone, attempt + 1, e)
+                logger.error("[%s] Ошибка сети при %s (попытка %d): %s", account.phone, method, attempt + 1, e)
                 account.mark_failed()
                 if attempt < self._max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
-        return []
+        return None
 
-    async def view_post(self, account: ProxyAccount, session: aiohttp.ClientSession, post_id: str) -> bool:
-        """Просмотреть конкретный пост."""
-        url = f"{MAX_API_BASE}/posts/{post_id}/view"
-        for attempt in range(self._max_retries):
-            try:
-                async with session.post(url) as resp:
-                    if resp.status in (200, 204):
-                        logger.info("[%s] Пост %s просмотрен", account.phone, post_id)
-                        account.reset_fails()
-                        return True
-                    elif resp.status == 429:
-                        await asyncio.sleep(2 ** (attempt + 1))
-                    else:
-                        logger.warning("[%s] Не удалось просмотреть пост %s: %d", account.phone, post_id, resp.status)
-                        account.mark_failed()
-                        return False
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.error("[%s] Ошибка при просмотре поста %s: %s", account.phone, post_id, e)
-                account.mark_failed()
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+    async def read_chat(self, account: ProxyAccount, session: aiohttp.ClientSession) -> bool:
+        """Отметить чат канала как прочитанный (ReadChat).
+
+        POST /waInstance{id}/readChat/{token}
+        Body: {"chatId": "..."}
+        Это помечает все сообщения канала как просмотренные.
+        """
+        result = await self._api_call(account, session, "readChat", {"chatId": self._channel_id})
+        if result is not None:
+            logger.info("[%s] Канал %s отмечен как прочитанный", account.phone, self._channel_id)
+            return True
         return False
 
-    async def view_all_posts_with_account(self, account: ProxyAccount, session: aiohttp.ClientSession) -> int:
-        """Просмотреть все посты одним аккаунтом. Возвращает количество просмотренных."""
-        posts = await self.fetch_posts(account, session)
-        if not posts:
-            return 0
+    async def get_chat_history(self, account: ProxyAccount, session: aiohttp.ClientSession, count: int = 50) -> list[dict]:
+        """Получить историю сообщений канала (GetChatHistory).
+
+        POST /waInstance{id}/getChatHistory/{token}
+        Body: {"chatId": "...", "count": 50}
+        Сам вызов фиксирует просмотр сообщений на стороне сервера.
+        """
+        result = await self._api_call(account, session, "getChatHistory", {
+            "chatId": self._channel_id,
+            "count": count,
+        })
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return result.get("messages", result.get("data", []))
+        return []
+
+    async def get_last_incoming(self, account: ProxyAccount, session: aiohttp.ClientSession) -> list[dict]:
+        """Получить последние входящие сообщения (lastIncomingMessages).
+
+        GET /waInstance{id}/lastIncomingMessages/{token}
+        Возвращает журнал входящих — включает сообщения из каналов.
+        """
+        result = await self._api_call(account, session, "lastIncomingMessages", http_method="GET")
+        if isinstance(result, list):
+            return [m for m in result if m.get("chatId") == self._channel_id]
+        return []
+
+    async def view_posts_with_account(self, account: ProxyAccount, session: aiohttp.ClientSession) -> int:
+        """Просмотреть все посты канала одним аккаунтом.
+
+        Стратегия:
+        1. Получаем историю чата (getChatHistory) — это фиксирует просмотр
+        2. Отмечаем чат как прочитанный (readChat)
+        3. Дополнительно проверяем через lastIncomingMessages
+        """
+        # Шаг 1: Получить историю — сам запрос уже засчитывает просмотр
+        messages = await self.get_chat_history(account, session)
+        if not messages:
+            logger.warning("[%s] Нет сообщений в канале %s", account.phone, self._channel_id)
+            # Попробуем через lastIncomingMessages
+            messages = await self.get_last_incoming(account, session)
 
         viewed = 0
-        for post in posts:
-            post_id = post.get("id", "")
-            if not post_id:
-                continue
-            # Добавляем случайную задержку между просмотрами (1-3с)
-            delay = 1 + (hash(post_id + account.phone) % 3)
-            await asyncio.sleep(delay)
-
-            if await self.view_post(account, session, post_id):
+        for msg in messages:
+            msg_id = msg.get("idMessage", msg.get("id", ""))
+            if msg_id and msg_id not in self._viewed_ids:
+                self._viewed_ids.add(msg_id)
                 viewed += 1
-                self._viewed_posts.add(post_id)
+
+        # Шаг 2: Отметить весь чат как прочитанный
+        await asyncio.sleep(1)
+        await self.read_chat(account, session)
+
+        logger.info("[%s] Просмотрено %d постов в канале %s", account.phone, viewed, self._channel_id)
         return viewed
 
     async def run_viewing_cycle(self) -> dict[str, int]:
@@ -103,18 +155,18 @@ class PostViewer:
             return {}
 
         results: dict[str, int] = {}
-
-        # Запускаем просмотр параллельно по всем аккаунтам
         tasks = []
         for account, session in sessions:
             tasks.append(self._run_for_account(account, session, results))
-
         await asyncio.gather(*tasks)
         return results
 
     async def _run_for_account(self, account: ProxyAccount, session: aiohttp.ClientSession, results: dict):
         try:
-            count = await self.view_all_posts_with_account(account, session)
+            # Случайная задержка между аккаунтами (0-5с) для естественности
+            delay = hash(account.phone) % 5
+            await asyncio.sleep(abs(delay))
+            count = await self.view_posts_with_account(account, session)
             results[account.phone] = count
         except Exception as e:
             logger.error("Непредвиденная ошибка для %s: %s", account.phone, e)

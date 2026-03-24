@@ -2,9 +2,18 @@
 """
 Max Post Viewer — автоматический просмотр постов через прокси-аккаунты.
 
+Использует GREEN-API для доступа к пользовательским аккаунтам Max.
+Каждый аккаунт подключается через свой прокси для изоляции.
+
 Использование:
     python main.py --config config.json
     python main.py --config config.json --once   # один цикл без повторов
+
+Перед запуском:
+    1. Зарегистрируйтесь на https://green-api.com и создайте инстансы
+    2. Авторизуйте каждый аккаунт Max в GREEN-API
+    3. Заполните config.json (см. config.example.json)
+    4. pip install -r requirements.txt
 """
 
 import argparse
@@ -43,13 +52,16 @@ def load_config(path: str) -> dict:
 
 
 def build_accounts(config: dict) -> list[ProxyAccount]:
+    base_url = config.get("green_api_base_url", "https://api.green-api.com")
     accounts = []
     for acc in config.get("accounts", []):
         accounts.append(
             ProxyAccount(
                 phone=acc["phone"],
-                token=acc["token"],
+                id_instance=acc["id_instance"],
+                api_token=acc["api_token"],
                 proxy_url=acc["proxy"],
+                base_url=base_url,
             )
         )
     if not accounts:
@@ -58,8 +70,42 @@ def build_accounts(config: dict) -> list[ProxyAccount]:
     return accounts
 
 
+async def check_accounts(pm: ProxyManager):
+    """Проверить статус всех аккаунтов перед началом работы."""
+    sessions = await pm.get_sessions()
+    for account, session in sessions:
+        url = account.api_url("getStateInstance")
+        try:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    state = data.get("stateInstance", "unknown")
+                    logger.info("[%s] Статус: %s", account.phone, state)
+                    if state != "authorized":
+                        logger.warning("[%s] Аккаунт не авторизован! Авторизуйте в GREEN-API", account.phone)
+                        account.is_active = False
+                else:
+                    logger.error("[%s] Не удалось проверить статус: %d", account.phone, resp.status)
+                    account.mark_failed()
+        except Exception as e:
+            logger.error("[%s] Ошибка проверки: %s", account.phone, e)
+            account.mark_failed()
+
+
 async def main_loop(viewer: PostViewer, pm: ProxyManager, interval: int, run_once: bool):
     """Основной цикл просмотра постов."""
+    # Проверяем аккаунты перед стартом
+    logger.info("Проверка статуса аккаунтов...")
+    await check_accounts(pm)
+
+    active = pm.active_accounts
+    if not active:
+        logger.error("Нет авторизованных аккаунтов. Завершаем.")
+        await pm.close_all()
+        return
+
+    logger.info("Готово к работе. Авторизованных аккаунтов: %d", len(active))
+
     cycle = 0
     try:
         while not _shutdown.is_set():
@@ -84,15 +130,15 @@ async def main_loop(viewer: PostViewer, pm: ProxyManager, interval: int, run_onc
             # Ждём интервал или сигнал остановки
             try:
                 await asyncio.wait_for(_shutdown.wait(), timeout=interval)
-                break  # shutdown was set
+                break
             except asyncio.TimeoutError:
-                pass  # нормальный таймаут — продолжаем
+                pass
     finally:
         await pm.close_all()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Max Post Viewer — просмотр постов через прокси-аккаунты")
+    parser = argparse.ArgumentParser(description="Max Post Viewer — просмотр постов через прокси-аккаунты (GREEN-API)")
     parser.add_argument("--config", required=True, help="Путь к файлу конфигурации JSON")
     parser.add_argument("--once", action="store_true", help="Выполнить один цикл и завершить")
     args = parser.parse_args()
@@ -102,20 +148,20 @@ def main():
 
     config = load_config(args.config)
     accounts = build_accounts(config)
-    interval = config.get("view_interval_seconds", 30)
+    interval = config.get("view_interval_seconds", 60)
     max_retries = config.get("max_retries", 3)
-    target_user_id = config.get("target_user_id", "")
+    channel_id = config.get("target_channel_id", "")
 
-    if not target_user_id:
-        logger.error("target_user_id не указан в конфигурации")
+    if not channel_id:
+        logger.error("target_channel_id не указан в конфигурации")
         sys.exit(1)
 
     logger.info("Загружено аккаунтов: %d", len(accounts))
-    logger.info("Целевой пользователь: %s", target_user_id)
+    logger.info("Целевой канал: %s", channel_id)
     logger.info("Интервал между циклами: %dс", interval)
 
     pm = ProxyManager(accounts)
-    viewer = PostViewer(pm, target_user_id, max_retries=max_retries)
+    viewer = PostViewer(pm, channel_id, max_retries=max_retries)
 
     asyncio.run(main_loop(viewer, pm, interval, args.once))
     logger.info("Работа завершена.")

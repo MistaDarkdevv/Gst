@@ -1,8 +1,8 @@
-"""Менеджер прокси-подключений для аккаунтов Max."""
+"""Менеджер прокси-подключений для аккаунтов Max через GREEN-API."""
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import aiohttp
@@ -13,13 +13,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ProxyAccount:
-    """Аккаунт с привязанным прокси."""
+    """Аккаунт Max, подключённый через GREEN-API с прокси."""
     phone: str
-    token: str
+    id_instance: str
+    api_token: str
     proxy_url: str
-    session: Optional[aiohttp.ClientSession] = None
+    base_url: str = "https://api.green-api.com"
+    session: Optional[aiohttp.ClientSession] = field(default=None, repr=False)
     is_active: bool = True
     fail_count: int = 0
+
+    def api_url(self, method: str) -> str:
+        """Сформировать URL для вызова метода GREEN-API."""
+        return f"{self.base_url}/waInstance{self.id_instance}/{method}/{self.api_token}"
 
     async def create_session(self) -> aiohttp.ClientSession:
         """Создать HTTP-сессию через прокси."""
@@ -30,8 +36,7 @@ class ProxyAccount:
         self.session = aiohttp.ClientSession(
             connector=connector,
             headers={
-                "User-Agent": "Max/1.0 (Android 14; SDK 34)",
-                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
                 "Accept": "application/json",
             },
             timeout=aiohttp.ClientTimeout(total=15),
@@ -46,7 +51,7 @@ class ProxyAccount:
 
     def mark_failed(self):
         self.fail_count += 1
-        if self.fail_count >= 3:
+        if self.fail_count >= 5:
             self.is_active = False
             logger.warning("Аккаунт %s деактивирован после %d ошибок", self.phone, self.fail_count)
 
