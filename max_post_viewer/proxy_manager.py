@@ -1,6 +1,5 @@
-"""Менеджер прокси-подключений для аккаунтов Max через GREEN-API."""
+"""Менеджер прокси-подключений для аккаунтов Max (WebSocket)."""
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -10,41 +9,55 @@ from aiohttp_socks import ProxyConnector
 
 logger = logging.getLogger(__name__)
 
+# Внутренний WebSocket API мессенджера Max
+WS_URL = "wss://ws-api.oneme.ru/websocket"
+WS_ORIGIN = "https://web.max.ru"
+
 
 @dataclass
 class ProxyAccount:
-    """Аккаунт Max, подключённый через GREEN-API с прокси."""
+    """Аккаунт Max с прокси.
+
+    auth_token можно получить:
+      1. Открыть https://web.max.ru в браузере
+      2. F12 → Application → Local Storage → https://web.max.ru
+      3. Скопировать значение ключа __oneme_auth
+    """
     phone: str
-    id_instance: str
-    api_token: str
+    auth_token: str
     proxy_url: str
-    base_url: str = "https://api.green-api.com"
+    ws: Optional[aiohttp.ClientWebSocketResponse] = field(default=None, repr=False)
     session: Optional[aiohttp.ClientSession] = field(default=None, repr=False)
     is_active: bool = True
     fail_count: int = 0
+    _seq: int = field(default=0, repr=False)
 
-    def api_url(self, method: str) -> str:
-        """Сформировать URL для вызова метода GREEN-API."""
-        return f"{self.base_url}/waInstance{self.id_instance}/{method}/{self.api_token}"
+    def next_seq(self) -> int:
+        """Получить следующий порядковый номер сообщения."""
+        seq = self._seq
+        self._seq += 1
+        return seq
 
-    async def create_session(self) -> aiohttp.ClientSession:
-        """Создать HTTP-сессию через прокси."""
-        if self.session and not self.session.closed:
-            return self.session
+    async def connect(self) -> aiohttp.ClientWebSocketResponse:
+        """Подключиться к WebSocket через прокси."""
+        if self.ws and not self.ws.closed:
+            return self.ws
 
         connector = ProxyConnector.from_url(self.proxy_url)
-        self.session = aiohttp.ClientSession(
-            connector=connector,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            timeout=aiohttp.ClientTimeout(total=15),
+        self.session = aiohttp.ClientSession(connector=connector)
+        self.ws = await self.session.ws_connect(
+            WS_URL,
+            headers={"Origin": WS_ORIGIN},
+            heartbeat=30,
         )
-        return self.session
+        self._seq = 0
+        return self.ws
 
     async def close(self):
-        """Закрыть сессию."""
+        """Закрыть WebSocket и сессию."""
+        if self.ws and not self.ws.closed:
+            await self.ws.close()
+            self.ws = None
         if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
@@ -64,25 +77,12 @@ class ProxyManager:
 
     def __init__(self, accounts: list[ProxyAccount]):
         self._accounts = accounts
-        self._lock = asyncio.Lock()
 
     @property
     def active_accounts(self) -> list[ProxyAccount]:
         return [a for a in self._accounts if a.is_active]
 
-    async def get_sessions(self) -> list[tuple[ProxyAccount, aiohttp.ClientSession]]:
-        """Получить активные сессии всех аккаунтов."""
-        result = []
-        for account in self.active_accounts:
-            try:
-                session = await account.create_session()
-                result.append((account, session))
-            except Exception as e:
-                logger.error("Не удалось создать сессию для %s: %s", account.phone, e)
-                account.mark_failed()
-        return result
-
     async def close_all(self):
-        """Закрыть все сессии."""
+        """Закрыть все подключения."""
         for account in self._accounts:
             await account.close()

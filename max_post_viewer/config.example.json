@@ -1,21 +1,16 @@
 {
-  "api_provider": "green-api",
-  "green_api_base_url": "https://api.green-api.com",
   "target_channel_id": "CHANNEL_CHAT_ID",
   "view_interval_seconds": 60,
-  "max_retries": 3,
-  "request_timeout": 15,
+  "posts_count": 50,
   "accounts": [
     {
       "phone": "+7XXXXXXXXXX",
-      "id_instance": "1234567890",
-      "api_token": "abcdef1234567890abcdef1234567890abcdef12345678",
+      "auth_token": "TOKEN_FROM_WEB_MAX_RU_LOCAL_STORAGE",
       "proxy": "socks5://user:pass@proxy1.example.com:1080"
     },
     {
       "phone": "+7XXXXXXXXXX",
-      "id_instance": "0987654321",
-      "api_token": "fedcba0987654321fedcba0987654321fedcba09876543",
+      "auth_token": "TOKEN_FROM_WEB_MAX_RU_LOCAL_STORAGE",
       "proxy": "http://user:pass@proxy2.example.com:8080"
     }
   ]
