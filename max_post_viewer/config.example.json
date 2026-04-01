@@ -1,0 +1,17 @@
+{
+  "target_channel_id": "CHANNEL_CHAT_ID",
+  "view_interval_seconds": 60,
+  "posts_count": 50,
+  "accounts": [
+    {
+      "phone": "+7XXXXXXXXXX",
+      "auth_token": "TOKEN_FROM_WEB_MAX_RU_LOCAL_STORAGE",
+      "proxy": "socks5://user:pass@proxy1.example.com:1080"
+    },
+    {
+      "phone": "+7XXXXXXXXXX",
+      "auth_token": "TOKEN_FROM_WEB_MAX_RU_LOCAL_STORAGE",
+      "proxy": "http://user:pass@proxy2.example.com:8080"
+    }
+  ]
+}
